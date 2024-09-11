@@ -2,12 +2,13 @@
 
 from llama_index.core.retrievers import (
     BaseRetriever,
-    VectorIndexRetriever,
+    VectorIndexRetriever
 )
 from llama_index.core import QueryBundle
-from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.schema import NodeWithScore
 from typing import List
+
+from llama_index.retrievers.bm25 import BM25Retriever
 
 
 class CustomRetriever(BaseRetriever):

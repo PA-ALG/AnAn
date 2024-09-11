@@ -18,8 +18,8 @@ from pydantic import Field
 class RemoteRankPostprocessor(BaseNodePostprocessor):
     """Remote-Rank-Serivce based Node processor."""
     top_n: float = Field(default=10)
-    rank_type: Optional[str] = Field(description="content的来源字段，不给定则默认使用node默认excluded_llm_metadata_keys")
-    url: str = Field(description="rank service url")
+    rank_type: Optional[str] = Field(default=None, description="content的来源字段，不给定则默认使用node默认excluded_llm_metadata_keys")
+    url: str = Field(default="https://localhost:8000/rerank", description="rank service url")
 
     @classmethod
     def class_name(cls) -> str:

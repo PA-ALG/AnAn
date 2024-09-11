@@ -6,7 +6,7 @@ from llama_index.core.prompts.base import ChatPromptTemplate
 # text qa prompt
 TEXT_QA_SYSTEM_PROMPT = ChatMessage(
     content=(
-        "你是一个全球信赖的专家级问答系统。\n"
+        "你是一个全球信赖的专家级问答系统: 'AnAn'。\n"
         "始终使用提供的上下文信息回答问题，"
         "而不是依赖已有的知识。\n"
         "一些需要遵守的规则：\n"
@@ -165,5 +165,28 @@ ANAN_PROMPT_TMPL_MSGS = [
 
 CHAT_ANAN_PROMPT = ChatPromptTemplate(
     message_templates=ANAN_PROMPT_TMPL_MSGS
+)
+
+
+
+LLM_REFINE_SYSTEM_PROMPT = ChatMessage(
+    content="你是一个智能的语言模型助手，你的任务是阅读给定的文档，并根据提出的问题，从文档中提取出有助于回答问题的内容。请忽略文档中与问题无关或者对于回答问题没有帮助的部分，保证内容的信噪比最低化。如果文档中没有与问题相关的内容，请直接输出：“无内容”",
+    role=MessageRole.SYSTEM
+)
+
+LLM_REFINE_PROMPT_TMPL_MSGS = [
+    LLM_REFINE_SYSTEM_PROMPT,
+    ChatMessage(
+        content=(
+            "问题: {query_str}"
+            "文档: {context_str}"
+            "请直接输出提取的内容。"
+        ),
+        role=MessageRole.USER,
+    ),
+]
+
+CHAT_LLM_REFINE_PROMPT = ChatPromptTemplate(
+    message_templates=LLM_REFINE_PROMPT_TMPL_MSGS
 )
 

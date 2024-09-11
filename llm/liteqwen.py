@@ -38,7 +38,7 @@ from llama_index.legacy.llms.base import (
     llm_completion_callback,
 )
 from llama_index.legacy.llms.custom import CustomLLM
-from liteqwen_utils import (
+from llm.liteqwen_utils import (
     chat_message_to_dashscope_messages,
     dashscope_response_to_chat_response,
     dashscope_response_to_completion_response, default_anan_system_prompt, liteqwen_messages_to_chat_message,

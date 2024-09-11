@@ -1,9 +1,12 @@
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+import os
+
+from llama_index.core.indices.vector_store import VectorIndexRetriever
+
 # from llama_index.llms.ollama import Ollama
 from llama_index.core.node_parser import SentenceWindowNodeParser
-from llama_index.core import PromptTemplate, get_response_synthesizer, StorageContext, VectorStoreIndex, \
+from llama_index.core import PromptTemplate, StorageContext, VectorStoreIndex, \
     SimpleDirectoryReader, Settings
-from llama_index.core.indices.query.query_transform import HyDEQueryTransform
+from llama_index.core.indices.query.query_transform import HyDEQueryTransform, StepDecomposeQueryTransform
 from llama_index.core.query_engine import TransformQueryEngine
 from llama_index.core.response_synthesizers.type import ResponseMode
 from llama_index.core import load_index_from_storage
@@ -11,159 +14,166 @@ from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.core.vector_stores import SimpleVectorStore
 import warnings
-from custom.glmfz import ChatGLM
-from llama_index.core.tools import QueryEngineTool
-from llama_index.core.query_engine import RouterQueryEngine
-from llama_index.core.selectors import LLMSingleSelector
-from dotenv import load_dotenv, find_dotenv
-from dotenv import dotenv_values
-from custom.query import build_query_engine
-from custom.prompt import qa_prompt_tmpl_str, simple_qa_prompt_tmpl_str
+
+from llama_index.embeddings.dashscope import DashScopeEmbedding, DashScopeTextEmbeddingModels, \
+    DashScopeTextEmbeddingType
+
+from llama_index.llms.dashscope import DashScope, DashScopeGenerationModels
+from llama_index.retrievers.bm25 import BM25Retriever
+from stemmer.stemmer import Stemmer
+
+from llm.liteqwen import LiteQwen
+from post_retrieval.postprocessor.refine import LLMRefineContentPostProcessor
+from post_retrieval.postprocessor.remote_rank import RemoteRankPostprocessor
+from pre_retrieval.prompts import DEFAULT_STEP_DECOMPOSE_QUERY_TRANSFORM_PROMPT
+from prompts.default_prompt_selectors import DEFAULT_TEXT_QA_PROMPT_SEL
+from query_engine.standard_rag_engine import StandardModularRAGQueryEngine
+from response_synthesizers.factory import get_response_synthesizer
+from retriever.custom import CustomRetriever
 
 warnings.filterwarnings('ignore')
 
-_ = load_dotenv(find_dotenv())  # 导入环境
-config = dotenv_values(".env")
+# _ = load_dotenv(find_dotenv())  # 导入环境
+# config = dotenv_values(".env")
 
-# 设置参数
-with_hyde = False                                           # 是否采用假设文档
-persist_dir = "storeQ"                                      # 向量存储地址
-hybrid_search = True                                        # 是否采用混合检索
-top_k = 3
-response_mode = ResponseMode.TREE_SUMMARIZE                 # 最佳实践为为TREE_SUMMARIZE
-with_query_classification = True                            # 是否对输入的问题进行分类
+os.environ["DASHSCOPE_API_KEY"] = "sk-6a103912161c41389d3ca3c911ecc89c"
+API_KEY = "sk-6a103912161c41389d3ca3c911ecc89c"
 
+def init_embedding_model():
+    embed_model = DashScopeEmbedding(
+        model_name=DashScopeTextEmbeddingModels.TEXT_EMBEDDING_V2,
+        text_type=DashScopeTextEmbeddingType.TEXT_TYPE_QUERY,
+        api_key=API_KEY
+    )
+    Settings.embed_model = embed_model
 
+    # TEST EMBED MODEL
+    text_to_embedding = ["风急天高猿啸哀"]
+    # Call text Embedding
+    result_embeddings = embed_model.get_text_embedding_batch(text_to_embedding)
+    # requests and embedding result index is correspond to.
+    for index, embedding in enumerate(result_embeddings):
+        if embedding is None:  # if the correspondence request is embedding failed.
+            print("The %s embedding failed." % text_to_embedding[index])
+        else:
+            print("Dimension of embeddings: %s" % len(embedding))
+            print(
+                "Input: %s, embedding is: %s"
+                % (text_to_embedding[index], embedding[:5])
+            )
+    return embed_model
+
+def init_llm():
+    dashscope_llm = DashScope(model_name=DashScopeGenerationModels.QWEN_TURBO, api_key=API_KEY)
+    # llm = LiteQwen()
+    return dashscope_llm
 def set_index():
-    "...略"
+    # set embeder
+    # 加载大模型
+    # Settings.llm = Ollama(model="qwen2:1.5b", request_timeout=30.0, temperature=0)
+    Settings.llm = init_llm()
+    # load data
+    documents = SimpleDirectoryReader("./data").load_data()
+
+    # Sliding windows chunking & Extract nodes from documents
+    node_parser = SentenceWindowNodeParser.from_defaults(
+        # how many sentences on either side to capture
+        window_size=3,
+        # the metadata key that holds the window of surrounding sentences
+        window_metadata_key="window",
+        # the metadata key that holds the original sentence
+        original_text_metadata_key="original_sentence"
+    )
+    nodes = node_parser.get_nodes_from_documents(documents, show_progress=True)
+
+    # indexing & storing
+    persist_dir = "storeQ"
+    os.makedirs(persist_dir, exist_ok=True)
+
+    try:
+        storage_context = StorageContext.from_defaults(
+            docstore=SimpleDocumentStore.from_persist_dir(persist_dir=persist_dir),
+            vector_store=SimpleVectorStore.from_persist_dir(persist_dir=persist_dir),
+            index_store=SimpleIndexStore.from_persist_dir(persist_dir=persist_dir),
+        )
+        index = load_index_from_storage(storage_context)
+    except:
+        index = VectorStoreIndex(nodes=nodes, embed_model=init_embedding_model())
+        index.storage_context.persist(persist_dir=persist_dir)
+
+    return index, nodes
+
 
 def set_pre_retrieval():
-    ...
+    stepback_decompose_query_engine = StepDecomposeQueryTransform(llm=init_llm(),
+                                                        step_decompose_query_prompt=DEFAULT_STEP_DECOMPOSE_QUERY_TRANSFORM_PROMPT)
+    return stepback_decompose_query_engine
 
-def set_retrieval():
-    ...
+
+def set_retrieval(embed_model, nodes, index):
+    bm25_retriever = BM25Retriever.from_defaults(
+        nodes=nodes,
+        similarity_top_k=5,
+    )
+    vector_retriever = VectorIndexRetriever(index=index, similarity_top_k=5, embed_model=embed_model)
+    hybrid_retriever = CustomRetriever(vector_retriever, bm25_retriever, mode="AND", alpha=0.3)
+    return vector_retriever
+
 
 def set_postprocessor():
-    ...
+    llm_refine_context_node_processor = LLMRefineContentPostProcessor() # 改写
+    # remote_reranker = RemoteRankPostprocessor() # 对接rank service
+    # return [remote_reranker]
+    return [llm_refine_context_node_processor]
+
 
 def set_response_synthesizer():
-    ...
-
-# ——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-# 根据如下description选择是否需要进行检索增强生成
-
-# 对于回答需要准确回答特定上下文知识的问题很有用。
-rag_description = "Useful for answering questions that require specific contextual knowledge to be answered accurately."
-
-# 用于回答不需要特定上下文知识来回答的问题
-norag_rag_description = ("Used to answer questions that do not require specific contextual knowledge to be answered "
-                         "accurately.")
-
-# ——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-# 输入
-# query_str = "How many people are on the deck after ten o'clock?"
-query_str = "Who did Fang Hongjian kiss?"
-# query_str = "what is computer?"
-
-# ——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-# 加载嵌入模型
-Settings.embed_model = HuggingFaceEmbedding(
-    model_name="BAAI/bge-large-zh-v1.5",
-    cache_folder="./BAAI/",
-    embed_batch_size=128,
-    local_files_only=True,  # 仅加载本地模型，不尝试下载
-    device="cuda",
-)
-
-# 加载大模型
-# Settings.llm = Ollama(model="qwen2:1.5b", request_timeout=30.0, temperature=0)
-Settings.llm = ChatGLM(
-    api_key=config["GLM_KEY"],
-    model="glm-4",
-    api_base="https://open.bigmodel.cn/api/paas/v4/",
-    is_chat_model=True,
-)
-
-# ——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-# load data
-documents = SimpleDirectoryReader("./data").load_data()
-
-# Sliding windows chunking & Extract nodes from documents
-node_parser = SentenceWindowNodeParser.from_defaults(
-    # how many sentences on either side to capture
-    window_size=3,
-    # the metadata key that holds the window of surrounding sentences
-    window_metadata_key="window",
-    # the metadata key that holds the original sentence
-    original_text_metadata_key="original_sentence",
-)
-nodes = node_parser.get_nodes_from_documents(documents, show_progress=False)
-
-# ——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-
-# indexing & storing
-try:
-    storage_context = StorageContext.from_defaults(
-        docstore=SimpleDocumentStore.from_persist_dir(persist_dir=persist_dir),
-        vector_store=SimpleVectorStore.from_persist_dir(persist_dir=persist_dir),
-        index_store=SimpleIndexStore.from_persist_dir(persist_dir=persist_dir),
+    response_synthesizer = get_response_synthesizer(
+        llm=init_llm(),
+        text_qa_template=DEFAULT_TEXT_QA_PROMPT_SEL,
+        response_mode=ResponseMode.SIMPLE_SUMMARIZE
     )
-    index = load_index_from_storage(storage_context)
-except:
-    index = VectorStoreIndex(nodes=nodes)
-    index.storage_context.persist(persist_dir=persist_dir)
+    return response_synthesizer
 
-# prompt
-qa_prompt_tmpl = PromptTemplate(qa_prompt_tmpl_str)
-simple_qa_prompt_tmpl = PromptTemplate(simple_qa_prompt_tmpl_str)  # norag
+if __name__ == '__main__':
+    # 预先的准备：embedding model 、节点索引
+    # 注意：节点索引应用于线下验证，如用于线上的索引，我们则无需预先准备上面两者，而直接从构建preretrieval即可
+    embed_model = init_embedding_model()
+    index, nodes = set_index()
 
-# Build query_engine
-rag_query_engine = build_query_engine(index, ResponseMode.TREE_SUMMARIZE, qa_prompt_tmpl, hybrid_search, top_k, nodes)
-simple_query_engine = index.as_query_engine(similarity_top_k=top_k,
-                                            text_qa_template=simple_qa_prompt_tmpl,
-                                            response_synthesizer=get_response_synthesizer(
-                                                response_mode=ResponseMode.GENERATION),
-                                            )
+    # RAG流程内各模块
+    pre_retrieval = set_pre_retrieval()
+    retriever = set_retrieval(embed_model, nodes, index)
+    post_retrival = set_postprocessor()
+    response_synthesizer = set_response_synthesizer()
 
-# HyDE(当问题较为简单时，不需要该模块参与)
-if with_hyde:
-    hyde = HyDEQueryTransform(include_original=True)
-    rag_query_engine = TransformQueryEngine(rag_query_engine, hyde)
+    # 模块构建RAG pipline
+    standard_modular_rag_query_engine = StandardModularRAGQueryEngine(
+        pre_retrival = pre_retrieval,
+        retriever = retriever,
+        post_retrival = post_retrival,
+        response_synthesizer = response_synthesizer
+    )
 
-# Router Query Engine(Query Classification)
-rag_tool = QueryEngineTool.from_defaults(
-    query_engine=rag_query_engine,
-    description=rag_description,
-)
-simple_tool = QueryEngineTool.from_defaults(
-    query_engine=simple_query_engine,
-    description=norag_rag_description,
-)
-query_engine = RouterQueryEngine(
-    selector=LLMSingleSelector.from_defaults(),
-    query_engine_tools=[
-        rag_tool,
-        simple_tool,
-    ],
-)
+    # 测试
+    # query = "急性荨麻疹医生会怎么开药？"
+    query = "Fang Hongjian的家庭背景、个人经历和心理变化是如何相互作用并影响他的人生选择的？请具体描述他与未婚妻的关系、与父亲的互动以及他对社会和爱情的看法是如何形成的。"
+    while query:
+        response = standard_modular_rag_query_engine.query(query)
+        print("------------------")
+        print(f"Question: {str(query)}")
+        print("------------------")
+        print(f"Response: {str(response)}")
+        print("------------------")
+        query = input("提问：")
 
-# response
-if with_query_classification:
-    response = query_engine.query(query_str)
-else:
-    response = rag_query_engine.query(query_str)
-
-print(f"Question: {str(query_str)}")
-print("------------------")
-print(f"Response: {str(response)}")
-print("------------------")
-if response.metadata['selector_result'].ind == 0:
-    window = response.source_nodes[0].node.metadata["window"]  # 长度为3的窗口，包含了文本两侧的上下文。
-    sentence = response.source_nodes[0].node.metadata["original_sentence"]  # 检索到的文本
-    print(f"Window: {window}")
-    print("------------------")
-    print(f"Original Sentence: {sentence}")
-    print("------------------")
+    # if response.metadata['selector_result'].ind == 0:
+    #     window = response.source_nodes[0].node.metadata["window"]  # 长度为3的窗口，包含了文本两侧的上下文。
+    #     sentence = response.source_nodes[0].node.metadata["original_sentence"]  # 检索到的文本
+    #     print(f"Window: {window}")
+    #     print("------------------")
+    #     print(f"Original Sentence: {sentence}")
+    #     print("------------------")
 
 """
 示例1：

@@ -483,9 +483,6 @@ DEFAULT_CHOICE_SELECT_PROMPT = PromptTemplate(
     DEFAULT_CHOICE_SELECT_PROMPT_TMPL, prompt_type=PromptType.CHOICE_SELECT
 )
 
-
-
-
 ############################################
 # RankGPT Rerank template
 ############################################
