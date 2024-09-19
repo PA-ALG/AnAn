@@ -1,8 +1,14 @@
 # AnAn
 A Modular RAG&amp;Agent app framework.
 
-## 1. index
+
+## 1. 前置
+### 1. index
 考虑index构建方式较为多样（上传知识库切分/index， 提前构建等等），故暂不考虑纳入当前流程，而是由用户自行决定。
+
+### 2. LLM
+建议基于CustomLLM实现，目前已经实现 liteqwen版本，zhipuai版本
+
 
 ## 2. pre_retrieval
 基础组件：BaseQueryTransform
