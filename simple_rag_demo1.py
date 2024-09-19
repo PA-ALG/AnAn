@@ -30,16 +30,20 @@ from prompts.default_prompt_selectors import DEFAULT_TEXT_QA_PROMPT_SEL
 from query_engine.standard_rag_engine import StandardModularRAGQueryEngine
 from response_synthesizers.factory import get_response_synthesizer
 from retriever.custom import CustomRetriever
+from retriever.remote import AnAnRetriever
 
 warnings.filterwarnings('ignore')
 
 # _ = load_dotenv(find_dotenv())  # 导入环境
 # config = dotenv_values(".env")
 
-os.environ["DASHSCOPE_API_KEY"] = "sk-6a103912161c41389d3ca3c911ecc89c"
+# embedding/llm 基于阿里云Dashcope平台
+
 API_KEY = "sk-6a103912161c41389d3ca3c911ecc89c"
+os.environ["DASHSCOPE_API_KEY"] = API_KEY
 
 def init_embedding_model():
+
     embed_model = DashScopeEmbedding(
         model_name=DashScopeTextEmbeddingModels.TEXT_EMBEDDING_V2,
         text_type=DashScopeTextEmbeddingType.TEXT_TYPE_QUERY,
@@ -111,13 +115,14 @@ def set_pre_retrieval():
 
 
 def set_retrieval(embed_model, nodes, index):
-    bm25_retriever = BM25Retriever.from_defaults(
-        nodes=nodes,
-        similarity_top_k=5,
-    )
-    vector_retriever = VectorIndexRetriever(index=index, similarity_top_k=5, embed_model=embed_model)
-    hybrid_retriever = CustomRetriever(vector_retriever, bm25_retriever, mode="AND", alpha=0.3)
-    return vector_retriever
+    # bm25_retriever = BM25Retriever.from_defaults(
+    #     nodes=nodes,
+    #     similarity_top_k=5,
+    # )
+    # vector_retriever = VectorIndexRetriever(index=index, similarity_top_k=5, embed_model=embed_model)
+    # hybrid_retriever = CustomRetriever(vector_retriever, bm25_retriever, mode="AND", alpha=0.3)
+    api_retriever = AnAnRetriever(api_url="https://localhost:5000/api/v1/query")
+    return api_retriever
 
 
 def set_postprocessor():
@@ -149,15 +154,14 @@ if __name__ == '__main__':
 
     # 模块构建RAG pipline
     standard_modular_rag_query_engine = StandardModularRAGQueryEngine(
-        pre_retrival = pre_retrieval,
-        retriever = retriever,
-        post_retrival = post_retrival,
-        response_synthesizer = response_synthesizer
+        pre_retrival=pre_retrieval,
+        retriever=retriever,
+        post_retrival=post_retrival,
+        response_synthesizer=response_synthesizer
     )
 
     # 测试
-    # query = "急性荨麻疹医生会怎么开药？"
-    query = "Fang Hongjian的家庭背景、个人经历和心理变化是如何相互作用并影响他的人生选择的？请具体描述他与未婚妻的关系、与父亲的互动以及他对社会和爱情的看法是如何形成的。"
+    query = "荨麻疹，急性的，医生开药要怎么开？"
     while query:
         response = standard_modular_rag_query_engine.query(query)
         print("------------------")
