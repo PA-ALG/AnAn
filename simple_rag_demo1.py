@@ -39,7 +39,7 @@ warnings.filterwarnings('ignore')
 
 # embedding/llm 基于阿里云Dashcope平台
 
-API_KEY = "sk-6a103912161c41389d3ca3c911ecc89c"
+API_KEY = ""
 os.environ["DASHSCOPE_API_KEY"] = API_KEY
 
 def init_embedding_model():
