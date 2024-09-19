@@ -63,3 +63,7 @@ def _query(self, query_bundle: QueryBundle) -> RESPONSE_TYPE:
 ```
 
 
+# demo
+[simple_rag_demo1.py](simple_rag_demo1.py)
+
+
