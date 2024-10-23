@@ -10,6 +10,7 @@ from llama_index.core.indices.query.query_transform import HyDEQueryTransform, S
 from llama_index.core.query_engine import TransformQueryEngine
 from llama_index.core.response_synthesizers.type import ResponseMode
 from llama_index.core import load_index_from_storage
+from llama_index.core.service_context_elements.llm_predictor import LLMPredictor
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.core.vector_stores import SimpleVectorStore
@@ -34,6 +35,7 @@ from retriever.remote import AnAnRetriever
 
 warnings.filterwarnings('ignore')
 
+# LLMPredictor
 # _ = load_dotenv(find_dotenv())  # 导入环境
 # config = dotenv_values(".env")
 
@@ -42,8 +44,8 @@ warnings.filterwarnings('ignore')
 API_KEY = ""
 os.environ["DASHSCOPE_API_KEY"] = API_KEY
 
-def init_embedding_model():
 
+def init_embedding_model():
     embed_model = DashScopeEmbedding(
         model_name=DashScopeTextEmbeddingModels.TEXT_EMBEDDING_V2,
         text_type=DashScopeTextEmbeddingType.TEXT_TYPE_QUERY,
@@ -67,10 +69,13 @@ def init_embedding_model():
             )
     return embed_model
 
+
 def init_llm():
     dashscope_llm = DashScope(model_name=DashScopeGenerationModels.QWEN_TURBO, api_key=API_KEY)
     # llm = LiteQwen()
     return dashscope_llm
+
+
 def set_index():
     # set embeder
     # 加载大模型
@@ -110,7 +115,7 @@ def set_index():
 
 def set_pre_retrieval():
     stepback_decompose_query_engine = StepDecomposeQueryTransform(llm=init_llm(),
-                                                        step_decompose_query_prompt=DEFAULT_STEP_DECOMPOSE_QUERY_TRANSFORM_PROMPT)
+                                                                  step_decompose_query_prompt=DEFAULT_STEP_DECOMPOSE_QUERY_TRANSFORM_PROMPT)
     return stepback_decompose_query_engine
 
 
@@ -126,7 +131,7 @@ def set_retrieval(embed_model, nodes, index):
 
 
 def set_postprocessor():
-    llm_refine_context_node_processor = LLMRefineContentPostProcessor() # 改写
+    llm_refine_context_node_processor = LLMRefineContentPostProcessor()  # 改写
     # remote_reranker = RemoteRankPostprocessor() # 对接rank service
     # return [remote_reranker]
     return [llm_refine_context_node_processor]
@@ -139,6 +144,7 @@ def set_response_synthesizer():
         response_mode=ResponseMode.SIMPLE_SUMMARIZE
     )
     return response_synthesizer
+
 
 if __name__ == '__main__':
     # 预先的准备：embedding model 、节点索引
